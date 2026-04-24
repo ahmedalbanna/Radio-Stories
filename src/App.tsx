@@ -14,34 +14,54 @@ import {
   onSnapshot, 
   addDoc, 
   updateDoc, 
+  deleteDoc,
   doc, 
   increment,
   serverTimestamp,
   getDoc,
-  setDoc
+  setDoc,
+  where
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Tale, TaleCategory } from './types';
+import { Tale, TaleCategory, UserProfile, Report } from './types';
 import { VoiceRecorder } from './components/VoiceRecorder';
 import { TaleCard } from './components/TaleCard';
-import { transcribeAudio, categorizeTale } from './lib/gemini';
-import { Radio, LogOut, User as UserIcon, Plus, X, ListFilter } from 'lucide-react';
+import { AudioPlayer } from './components/AudioPlayer';
+import { transcribeAudio, categorizeTale, moderateContent } from './lib/gemini';
+import { Radio, LogOut, User as UserIcon, Plus, X, Search, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [tales, setTales] = useState<Tale[]>([]);
+  const [filteredTales, setFilteredTales] = useState<Tale[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [showRecorder, setShowRecorder] = useState(false);
   const [filter, setFilter] = useState<TaleCategory | 'all'>('all');
   const [authReady, setAuthReady] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [reports, setReports] = useState<Report[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const isSheikh = user?.email === 'ahmedalbannatech@gmail.com';
+
+  useEffect(() => {
+    if (showAdmin && isSheikh) {
+      const q = query(collection(db, 'reports'), orderBy('createdAt', 'desc'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        setReports(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Report)));
+      });
+      return unsubscribe;
+    }
+  }, [showAdmin, isSheikh]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       setAuthReady(true);
       if (u) {
-        // Ensure user doc exists
         const path = `users/${u.uid}`;
         try {
           const userRef = doc(db, 'users', u.uid);
@@ -52,10 +72,15 @@ export default function App() {
               phoneNumber: u.phoneNumber || '',
               createdAt: serverTimestamp(),
             });
+            setUserProfile({ uid: u.uid, displayName: u.displayName || '', phoneNumber: '', createdAt: new Date() });
+          } else {
+            setUserProfile({ uid: u.uid, ...userSnap.data() } as UserProfile);
           }
         } catch (error) {
           handleFirestoreError(error, OperationType.WRITE, path);
         }
+      } else {
+        setUserProfile(null);
       }
     });
     return unsubscribe;
@@ -81,6 +106,21 @@ export default function App() {
     return unsubscribe;
   }, [authReady, user]);
 
+  useEffect(() => {
+    let result = tales;
+    if (filter !== 'all') {
+      result = result.filter(t => t.category === filter);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(t => 
+        (t.transcription && t.transcription.toLowerCase().includes(q)) ||
+        (t.authorName && t.authorName.toLowerCase().includes(q))
+      );
+    }
+    setFilteredTales(result);
+  }, [tales, filter, searchQuery]);
+
   const handleLogin = () => {
     const provider = new GoogleAuthProvider();
     signInWithPopup(auth, provider);
@@ -88,7 +128,7 @@ export default function App() {
 
   const handleLogout = () => signOut(auth);
 
-  const handleRecordingComplete = async (blob: Blob) => {
+  const handleRecordingComplete = async (blob: Blob, region?: string) => {
     if (!user) return;
     setIsUploading(true);
     
@@ -98,13 +138,20 @@ export default function App() {
       await uploadBytes(storageRef, blob);
       const url = await getDownloadURL(storageRef);
 
-      // AI Processing
       const reader = new FileReader();
       reader.readAsDataURL(blob);
       reader.onloadend = async () => {
         const base64data = (reader.result as string).split(',')[1];
         const transcription = await transcribeAudio(base64data, 'audio/webm');
         const category = transcription ? await categorizeTale(transcription) : 'other';
+        const isSafe = transcription ? !(await moderateContent(transcription)) : true;
+
+        if (!isSafe) {
+          alert('عفوا، هذا المحتوى يتعارض مع الآداب العامة ولن يتم نشره.');
+          setIsUploading(false);
+          setShowRecorder(false);
+          return;
+        }
 
         const path = 'tales';
         try {
@@ -112,7 +159,8 @@ export default function App() {
             authorId: user.uid,
             authorName: user.displayName || 'مستخدم مجهول',
             audioUrl: url,
-            duration: 0, // In a real app, calculate this
+            duration: 0,
+            region: region || '',
             transcription: transcription || 'لم يتم استخراج النص',
             category: category as TaleCategory,
             clapsCount: 0,
@@ -133,6 +181,41 @@ export default function App() {
     }
   };
 
+  const handleBioRecordingComplete = async (blob: Blob) => {
+    if (!user) return;
+    setIsUploading(true);
+    
+    try {
+      const filename = `bios/${user.uid}_${Date.now()}.webm`;
+      const storageRef = ref(storage, filename);
+      await uploadBytes(storageRef, blob);
+      const url = await getDownloadURL(storageRef);
+
+      const reader = new FileReader();
+      reader.readAsDataURL(blob);
+      reader.onloadend = async () => {
+        const base64data = (reader.result as string).split(',')[1];
+        const transcription = await transcribeAudio(base64data, 'audio/webm');
+
+        const path = `users/${user.uid}`;
+        try {
+          const userRef = doc(db, 'users', user.uid);
+          await updateDoc(userRef, {
+            voiceAvatarUrl: url,
+            voiceBio: transcription || 'تعريف صوتي'
+          });
+          setUserProfile(prev => prev ? { ...prev, voiceAvatarUrl: url, voiceBio: transcription || 'تعريف صوتي' } : null);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.WRITE, path);
+        }
+        setIsUploading(false);
+      };
+    } catch (err) {
+      console.error("Bio upload error:", err);
+      setIsUploading(false);
+    }
+  };
+
   const handleClap = async (id: string) => {
     const path = `tales/${id}`;
     try {
@@ -145,7 +228,26 @@ export default function App() {
     }
   };
 
-  const filteredTales = filter === 'all' ? tales : tales.filter(t => t.category === filter);
+  const handleDismissReport = async (reportId: string) => {
+    try {
+      await updateDoc(doc(db, 'reports', reportId), { status: 'dismissed' });
+    } catch (error) {
+      console.error(error);
+      alert('حدث خطأ');
+    }
+  };
+
+  const handleDeleteTaleFromReport = async (taleId: string, reportId: string) => {
+    if (!window.confirm('هل أنت متأكد من حذف الحكاية والموافقة على البلاغ؟')) return;
+    try {
+      await deleteDoc(doc(db, 'tales', taleId));
+      await updateDoc(doc(db, 'reports', reportId), { status: 'reviewed' });
+      alert('تم إزالة الحكاية بنجاح.');
+    } catch (error) {
+      console.error(error);
+      alert('حدث خطأ أثناء الحذف.');
+    }
+  };
 
   if (!user) {
     return (
@@ -186,10 +288,19 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <button onClick={handleLogout} className="p-2 hover:bg-stone/10 rounded-full text-stone transition-colors">
-            <LogOut size={22} />
-          </button>
-          <div className="w-12 h-12 rounded-full border-2 border-olive p-0.5 shadow-md bg-white">
+          {isSheikh && (
+            <button 
+              onClick={() => setShowAdmin(true)} 
+              className="px-3 py-1.5 bg-yemen-red/10 text-yemen-red hover:bg-yemen-red hover:text-white rounded-full flex items-center gap-2 transition-colors font-bold text-xs"
+            >
+              <ShieldAlert size={16} /> 
+              محكمة الراديو
+            </button>
+          )}
+          <div 
+            onClick={() => setShowProfile(true)}
+            className="w-12 h-12 rounded-full border-2 border-olive p-0.5 shadow-md bg-white cursor-pointer hover:opacity-80 transition-opacity"
+          >
             {user.photoURL ? (
               <img src={user.photoURL} alt={user.displayName || ''} className="w-full h-full rounded-full object-cover" />
             ) : (
@@ -202,9 +313,23 @@ export default function App() {
       </header>
 
       {/* Hero Section */}
-      <div className="w-full max-w-2xl px-6 pt-10 pb-4 flex justify-between items-end">
-        <h2 className="serif text-4xl font-black text-olive">حكايات اليوم</h2>
-        <span className="text-stone font-bold text-xs uppercase tracking-widest">مباشر • ريف اليمن</span>
+      <div className="w-full max-w-2xl px-6 pt-10 pb-4 flex flex-col gap-6">
+        <div className="flex justify-between items-end">
+          <h2 className="serif text-4xl font-black text-olive">حكايات اليوم</h2>
+          <span className="text-stone font-bold text-xs uppercase tracking-widest">مباشر • ريف اليمن</span>
+        </div>
+        
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-stone/50" size={20} />
+          <input 
+            type="text" 
+            placeholder="ابحث بالحروف في الحكايات الصوتية..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full bg-white border border-border-warm rounded-full py-3 pr-12 pl-4 outline-none focus:border-clay font-bold text-olive placeholder:font-normal placeholder:text-stone/50"
+          />
+        </div>
       </div>
 
       {/* Categories Scroller */}
@@ -231,7 +356,7 @@ export default function App() {
       </div>
 
       {/* Feed */}
-      <main className="max-w-2xl mx-auto px-6 py-4 flex flex-col gap-6">
+      <main className="w-full max-w-2xl mx-auto px-6 py-4 flex flex-col gap-6">
         {filteredTales.length === 0 ? (
           <div className="text-center py-20 text-olive/40 italic">
             لا توجد حكايات في هذه الموجة بعد...
@@ -268,23 +393,161 @@ export default function App() {
             initial={{ opacity: 0, y: 100 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 100 }}
-            className="fixed inset-0 z-50 bg-bone flex flex-col pt-12"
+            className="fixed inset-0 z-50 bg-bone flex flex-col pt-12 overflow-y-auto"
           >
-            <div className="px-8 flex justify-end">
+            <div className="px-8 flex justify-end shrink-0">
               <button onClick={() => setShowRecorder(false)} className="p-3 hover:bg-stone/10 rounded-full transition-colors">
                 <X size={40} className="text-olive" />
               </button>
             </div>
-            <div className="flex-1 flex flex-col items-center justify-center px-10">
+            <div className="flex-1 flex flex-col items-center justify-center px-10 pb-20">
               <h1 className="serif text-5xl font-black mb-4 text-olive text-center">سجّل حكايتك الآن</h1>
               <p className="text-stone font-bold uppercase tracking-widest text-center mb-12">بث جديد من قلب اليمن...</p>
               
-              <div className="yemeni-card p-4 bg-white/50 border-dashed border-2 border-border-warm mb-8">
-                <VoiceRecorder 
-                  onRecordingComplete={handleRecordingComplete} 
-                  isUploading={isUploading} 
-                />
+              <div className="w-full max-w-sm rounded-[32px] bg-white border border-border-warm p-2 shadow-xl">
+                <div className="border-dashed border-2 border-border-warm rounded-[28px]">
+                  <VoiceRecorder 
+                    onRecordingComplete={handleRecordingComplete} 
+                    isUploading={isUploading} 
+                    showRegionPicker
+                  />
+                </div>
               </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Profile Overlay */}
+      <AnimatePresence>
+        {showProfile && userProfile && (
+          <motion.div 
+            initial={{ opacity: 0, x: 100 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 100 }}
+            className="fixed inset-0 z-50 bg-bone flex flex-col overflow-y-auto"
+          >
+            <header className="sticky top-0 bg-bone/90 backdrop-blur-md border-b border-border-warm px-6 py-4 flex items-center justify-between z-10 shrink-0">
+              <h2 className="serif text-2xl font-black text-olive">حسابي</h2>
+              <div className="flex items-center gap-2">
+                <button onClick={handleLogout} className="p-2 hover:bg-stone/10 rounded-full text-yemen-red transition-colors font-bold flex gap-2 items-center text-sm">
+                  تسجيل خروج
+                </button>
+                <button onClick={() => setShowProfile(false)} className="p-2 hover:bg-stone/10 rounded-full transition-colors">
+                  <X size={28} className="text-olive" />
+                </button>
+              </div>
+            </header>
+
+            <div className="flex-1 p-6 max-w-2xl w-full mx-auto flex flex-col gap-8">
+              <div className="flex flex-col items-center text-center">
+                <div className="w-32 h-32 rounded-full border-4 border-olive p-1 shadow-xl bg-white mb-4">
+                  {user.photoURL ? (
+                    <img src={user.photoURL} alt={user.displayName || ''} className="w-full h-full rounded-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full rounded-full bg-sand flex items-center justify-center">
+                      <UserIcon size={48} className="text-olive" />
+                    </div>
+                  )}
+                </div>
+                <h3 className="serif text-3xl font-black text-olive mb-2">{user.displayName}</h3>
+                
+                <div className="bg-sand p-6 rounded-[32px] w-full mt-6 border border-border-warm">
+                  <h4 className="font-bold text-stone uppercase tracking-widest text-xs mb-4">بطاقتك الصوتية (تعريفك)</h4>
+                  {userProfile.voiceAvatarUrl ? (
+                    <div className="flex flex-col gap-4">
+                      <div className="p-4 bg-white rounded-2xl italic font-serif text-olive/80 border-r-4 border-clay">
+                        {userProfile.voiceBio}
+                      </div>
+                      <AudioPlayer url={userProfile.voiceAvatarUrl} />
+                      <button 
+                        onClick={() => setUserProfile({...userProfile, voiceAvatarUrl: undefined})}
+                        className="text-xs font-bold text-yemen-red mt-2 self-start underline"
+                      >
+                        إعادة تسجيل صوتي
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center bg-white p-6 rounded-2xl border-2 border-dashed border-border-warm">
+                      <p className="text-olive font-bold mb-4">لم تسجل تعريفاً بصوتك بعد</p>
+                      <VoiceRecorder onRecordingComplete={handleBioRecordingComplete} isUploading={isUploading} compact />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-bold text-stone uppercase tracking-widest text-sm mb-4 border-b border-border-warm pb-2">حكاياتي التي سجلتها</h4>
+                <div className="flex flex-col gap-4">
+                  {tales.filter(t => t.authorId === user.uid).length === 0 ? (
+                    <p className="text-stone italic">لم تسجل أي حكاية بعد...</p>
+                  ) : (
+                    tales.filter(t => t.authorId === user.uid).map(tale => (
+                      <TaleCard key={tale.id} tale={tale} onClap={handleClap} />
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Admin Panel Overlay */}
+      <AnimatePresence>
+        {showAdmin && isSheikh && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="fixed inset-0 z-50 bg-bone flex flex-col overflow-y-auto"
+          >
+            <header className="sticky top-0 bg-bone/90 backdrop-blur-md border-b border-border-warm px-6 py-4 flex items-center justify-between z-10 shrink-0">
+              <div className="flex items-center gap-3 text-yemen-red">
+                <ShieldAlert size={28} />
+                <h2 className="serif text-2xl font-black">محكمة الراديو (خاص بالشيوخ)</h2>
+              </div>
+              <button onClick={() => setShowAdmin(false)} className="p-2 hover:bg-stone/10 rounded-full transition-colors">
+                <X size={28} className="text-olive" />
+              </button>
+            </header>
+            
+            <div className="p-6 max-w-3xl w-full mx-auto flex flex-col gap-6">
+              <h3 className="font-bold text-stone text-sm uppercase tracking-widest border-b border-border-warm pb-2">البلاغات المعلقة</h3>
+              {reports.filter(r => r.status === 'pending').length === 0 ? (
+                <p className="text-stone italic text-center py-10">لا توجد بلاغات معلقة. الراديو نظيف!</p>
+              ) : (
+                reports.filter(r => r.status === 'pending').map(report => (
+                  <div key={report.id} className="bg-white p-6 rounded-2xl border-2 border-border-warm shadow-md flex flex-col gap-4">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-yemen-red">بلاغ عن حكاية</span>
+                      <span className="text-[10px] text-stone font-mono">
+                        {report.createdAt ? new Date(report.createdAt.toDate()).toLocaleString() : ''}
+                      </span>
+                    </div>
+                    
+                    <div className="bg-red-50 p-4 rounded-xl border border-red-100">
+                      <p className="text-xs font-bold text-yemen-red mb-2">تسجيل الشكوى:</p>
+                      <AudioPlayer url={report.audioUrl} />
+                    </div>
+
+                    <div className="flex gap-4 border-t border-border-warm pt-4">
+                      <button 
+                        onClick={() => handleDeleteTaleFromReport(report.taleId, report.id)}
+                        className="flex-1 bg-yemen-red text-white py-2 rounded-xl font-bold hover:bg-red-700 transition-colors"
+                      >
+                        حذف الحكاية المخالفة
+                      </button>
+                      <button 
+                        onClick={() => handleDismissReport(report.id)}
+                        className="flex-1 bg-sand text-olive py-2 rounded-xl font-bold hover:bg-sand/80 transition-colors"
+                      >
+                        تجاهل البلاغ
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </motion.div>
         )}

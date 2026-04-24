@@ -1,8 +1,12 @@
-import React from 'react';
-import { Tale, TaleCategory } from '../types';
+import React, { useState, useEffect } from 'react';
+import { Tale, TaleCategory, VoiceResponse } from '../types';
 import { AudioPlayer } from './AudioPlayer';
-import { Heart, MessageCircle, Share2, MapPin, Tag } from 'lucide-react';
-import { motion } from 'motion/react';
+import { Share2, MapPin, Tag, Flag, ChevronDown, ChevronUp } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, storage, auth, handleFirestoreError, OperationType } from '../lib/firebase';
+import { VoiceRecorder } from './VoiceRecorder';
 
 interface TaleCardProps {
   tale: Tale;
@@ -19,6 +23,90 @@ const categoryIcons: Record<TaleCategory, string> = {
 };
 
 export const TaleCard: React.FC<TaleCardProps> = ({ tale, onClap }) => {
+  const [showReplies, setShowReplies] = useState(false);
+  const [responses, setResponses] = useState<VoiceResponse[]>([]);
+  const [isReplying, setIsReplying] = useState(false);
+  const [isUploadingReply, setIsUploadingReply] = useState(false);
+
+  const [isReporting, setIsReporting] = useState(false);
+  const [isUploadingReport, setIsUploadingReport] = useState(false);
+
+  useEffect(() => {
+    if (!showReplies) return;
+    const path = `tales/${tale.id}/responses`;
+    const q = query(collection(db, path), orderBy('createdAt', 'asc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setResponses(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as VoiceResponse)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
+    });
+    return unsubscribe;
+  }, [showReplies, tale.id]);
+
+  const handleShare = () => {
+    const text = encodeURIComponent(`اسمع هذه الحكاية من ${tale.authorName} على راديو الحكايات\n\n"${tale.transcription}"\n\nاستمع من هنا: ${window.location.origin}`);
+    window.open(`https://wa.me/?text=${text}`, '_blank');
+  };
+
+  const handleReportComplete = async (blob: Blob) => {
+    if (!auth.currentUser) return;
+    setIsUploadingReport(true);
+    
+    try {
+      const filename = `reports/${tale.id}_${auth.currentUser.uid}_${Date.now()}.webm`;
+      const storageRef = ref(storage, filename);
+      await uploadBytes(storageRef, blob);
+      const url = await getDownloadURL(storageRef);
+
+      const path = 'reports';
+      await addDoc(collection(db, path), {
+        taleId: tale.id,
+        reporterId: auth.currentUser.uid,
+        audioUrl: url,
+        transcription: "بلاغ صوتي", // Simplified for now, real app should transcribe
+        createdAt: serverTimestamp(),
+        status: 'pending'
+      });
+      
+      setIsUploadingReport(false);
+      setIsReporting(false);
+      alert('تم إرسال بلاغك الصوتي بنجاح لمراجعته من شيوخ الراديو.');
+    } catch (err) {
+      console.error(err);
+      setIsUploadingReport(false);
+      alert('حدث خطأ أثناء رفع البلاغ.');
+    }
+  };
+
+  const handleReplyComplete = async (blob: Blob) => {
+    if (!auth.currentUser) return;
+    setIsUploadingReply(true);
+    
+    try {
+      const filename = `responses/${tale.id}_${auth.currentUser.uid}_${Date.now()}.webm`;
+      const storageRef = ref(storage, filename);
+      await uploadBytes(storageRef, blob);
+      const url = await getDownloadURL(storageRef);
+
+      const path = `tales/${tale.id}/responses`;
+      await addDoc(collection(db, path), {
+        taleId: tale.id,
+        authorId: auth.currentUser.uid,
+        authorName: auth.currentUser.displayName || 'مستخدم مجهول',
+        audioUrl: url,
+        duration: 0,
+        createdAt: serverTimestamp()
+      });
+      
+      setIsUploadingReply(false);
+      setIsReplying(false);
+    } catch (err) {
+      console.error(err);
+      setIsUploadingReply(false);
+      alert('حدث خطأ أثناء الرفع.');
+    }
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -44,14 +132,41 @@ export const TaleCard: React.FC<TaleCardProps> = ({ tale, onClap }) => {
             </div>
           </div>
         </div>
-        <span className="bg-sand text-stone px-3 py-1 rounded-full text-[10px] font-bold">
-          {new Date(tale.createdAt?.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        </span>
+        <div className="flex flex-col items-end gap-2">
+          <span className="bg-sand text-stone px-3 py-1 rounded-full text-[10px] font-bold">
+            {tale.createdAt ? new Date(tale.createdAt.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'الآن'}
+          </span>
+          <button onClick={() => setIsReporting(!isReporting)} className="text-stone hover:text-yemen-red transition-colors" title="إبلاغ">
+            <Flag size={14} />
+          </button>
+        </div>
       </div>
 
       <div className="bg-sand/30 rounded-2xl p-5 serif italic text-olive/80 border-r-4 border-clay/30 text-lg">
         {tale.transcription || "جاري معالجة الصوت..."}
       </div>
+
+      <AnimatePresence>
+        {isReporting && (
+          <motion.div 
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="bg-red-50 p-4 rounded-2xl border-l-4 border-yemen-red overflow-hidden flex flex-col items-center"
+          >
+            <p className="text-xs font-bold text-yemen-red mb-2 uppercase tracking-widest leading-relaxed text-center">
+              سجل بصوتك سبب اعتراضك على هذه الحكاية، وسيراجعها شيوخ الراديو:
+            </p>
+            <VoiceRecorder onRecordingComplete={handleReportComplete} isUploading={isUploadingReport} compact />
+            <button 
+              onClick={() => setIsReporting(false)}
+              className="mt-3 text-[10px] font-bold text-stone hover:underline"
+            >
+              إلغاء البلاغ
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AudioPlayer url={tale.audioUrl} />
 
@@ -61,19 +176,68 @@ export const TaleCard: React.FC<TaleCardProps> = ({ tale, onClap }) => {
           className="flex items-center gap-2 text-clay font-black hover:scale-105 transition-transform"
         >
           <div className="text-xl">👏</div>
-          <span className="font-mono text-sm">{tale.clapsCount} تصفيق</span>
+          <span className="font-mono text-sm">{tale.clapsCount || 0} تصفيق</span>
         </button>
 
         <div className="flex items-center gap-2">
-          <button className="flex items-center gap-1.5 px-4 py-2 rounded-full hover:bg-sand text-olive font-bold text-sm transition-colors">
+          <button 
+            onClick={() => setShowReplies(!showReplies)}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-full hover:bg-sand text-olive font-bold text-sm transition-colors"
+          >
             <span>💬</span> 
-            <span>رد صوتي</span>
+            <span>ردود</span>
+            {showReplies ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
           </button>
-          <button className="p-2 rounded-full hover:bg-sand text-stone transition-colors">
+          <button onClick={handleShare} className="p-2 rounded-full hover:bg-sand text-stone transition-colors">
             <Share2 size={18} />
           </button>
         </div>
       </div>
+
+      <AnimatePresence>
+        {showReplies && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="pt-4 border-t border-border-warm/50 flex flex-col gap-4">
+              {responses.map(res => (
+                <div key={res.id} className="bg-sand/30 p-4 rounded-2xl pr-6 border-r-2 border-olive/20 flex flex-col gap-3">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-olive">{res.authorName}</span>
+                    <span className="text-[10px] text-stone font-mono">
+                      {res.createdAt ? new Date(res.createdAt.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                    </span>
+                  </div>
+                  <AudioPlayer url={res.audioUrl} />
+                </div>
+              ))}
+
+              {isReplying ? (
+                <div className="bg-sand p-4 rounded-2xl flex flex-col items-center">
+                  <p className="text-xs font-bold text-stone mb-4 uppercase tracking-widest">تحدث بردك الآن</p>
+                  <VoiceRecorder onRecordingComplete={handleReplyComplete} isUploading={isUploadingReply} compact />
+                  <button 
+                    onClick={() => setIsReplying(false)}
+                    className="mt-4 text-xs font-bold text-yemen-red hover:underline"
+                  >
+                    إلغاء التحدث
+                  </button>
+                </div>
+              ) : (
+                <button 
+                  onClick={() => setIsReplying(true)}
+                  className="bg-sand text-olive py-3 rounded-2xl font-bold hover:bg-sand/80 transition-colors flex items-center justify-center gap-2"
+                >
+                  <span>🎤</span> أضف ردك الصوتي
+                </button>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 };

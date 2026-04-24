@@ -51,3 +51,25 @@ export const categorizeTale = async (transcription: string) => {
     return 'other';
   }
 };
+
+export const moderateContent = async (transcription: string) => {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: [
+        {
+          parts: [
+            {
+              text: `Does the following Arabic text contain highly inappropriate, hateful, or severely offensive language? Answer ONLY "true" if it is inappropriate, or "false" if it is safe. Text: "${transcription}"`,
+            },
+          ],
+        },
+      ],
+    });
+
+    return response.text?.trim().toLowerCase() === 'true';
+  } catch (error) {
+    console.error("Gemini Moderation Error:", error);
+    return false;
+  }
+};

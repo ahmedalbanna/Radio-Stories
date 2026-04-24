@@ -39,3 +39,13 @@ export interface VoiceResponse {
   duration: number;
   createdAt: any;
 }
+
+export interface Report {
+  id: string;
+  taleId: string;
+  reporterId: string;
+  audioUrl: string;
+  transcription: string;
+  status: 'pending' | 'reviewed' | 'dismissed';
+  createdAt: any;
+}

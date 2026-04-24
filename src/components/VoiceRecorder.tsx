@@ -3,13 +3,16 @@ import { Mic, Square, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface VoiceRecorderProps {
-  onRecordingComplete: (blob: Blob) => void;
+  onRecordingComplete: (blob: Blob, region?: string) => void;
   isUploading?: boolean;
+  showRegionPicker?: boolean;
+  compact?: boolean;
 }
 
-export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ onRecordingComplete, isUploading }) => {
+export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ onRecordingComplete, isUploading, showRegionPicker = false, compact = false }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
+  const [selectedRegion, setSelectedRegion] = useState('');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<any>(null);
@@ -29,7 +32,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ onRecordingComplet
 
       mediaRecorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        onRecordingComplete(blob);
+        onRecordingComplete(blob, selectedRegion);
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -59,8 +62,42 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ onRecordingComplet
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  if (compact) {
+    return (
+      <div className="flex items-center gap-3">
+        {isRecording && (
+          <span className="text-clay font-mono font-bold">{formatDuration(duration)}</span>
+        )}
+        <button
+          onClick={isRecording ? stopRecording : startRecording}
+          disabled={isUploading}
+          className={`w-12 h-12 rounded-full flex items-center justify-center text-white ${isRecording ? 'bg-clay animate-pulse' : 'bg-olive'} ${isUploading ? 'opacity-50' : ''}`}
+        >
+          {isUploading ? <Loader2 className="animate-spin" size={20} /> : isRecording ? <Square size={20} fill="currentColor" /> : <Mic size={20} />}
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col items-center gap-8 p-12">
+    <div className="flex flex-col items-center gap-6 p-8 w-full max-w-sm mx-auto">
+      {showRegionPicker && !isRecording && !isUploading && (
+        <select 
+          value={selectedRegion} 
+          onChange={e => setSelectedRegion(e.target.value)}
+          className="w-full text-center bg-sand border-2 border-border-warm rounded-full py-2 px-4 text-olive font-bold outline-none focus:border-clay transition-colors"
+        >
+          <option value="">أين موقعك؟ (اختياري)</option>
+          <option value="صنعاء">صنعاء</option>
+          <option value="عدن">عدن</option>
+          <option value="تعز">تعز</option>
+          <option value="حضرموت">حضرموت</option>
+          <option value="الحديدة">الحديدة</option>
+          <option value="إب">إب</option>
+          <option value="أخرى">أخرى</option>
+        </select>
+      )}
+
       <AnimatePresence>
         {isRecording && (
           <motion.div 

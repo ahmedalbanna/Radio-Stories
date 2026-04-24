@@ -12,6 +12,7 @@ service cloud.firestore {
     function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
+    function isSheikh() { return isSignedIn() && request.auth.token.email == 'ahmedalbannatech@gmail.com'; }
 
     // Pillar 2: Validation Blueprints (No DB reads here)
     function isValidUser(data) {
@@ -32,9 +33,17 @@ service cloud.firestore {
     }
 
     function isValidResponse(data) {
-      return data.keys().hasAll(['taleId', 'authorId', 'authorName', 'audioUrl', 'createdAt']) &&
+      return data.keys().hasAll(['taleId', 'authorId', 'authorName', 'audioUrl', 'createdAt', 'duration']) &&
              data.authorId == request.auth.uid &&
              data.audioUrl is string && data.audioUrl.size() < 1000 &&
+             data.createdAt == request.time;
+    }
+
+    function isValidReport(data) {
+      return data.keys().hasAll(['taleId', 'reporterId', 'createdAt', 'status', 'audioUrl', 'transcription']) &&
+             data.reporterId == request.auth.uid &&
+             data.audioUrl is string &&
+             data.status == 'pending' &&
              data.createdAt == request.time;
     }
 
@@ -42,9 +51,15 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if isSignedIn() && isValidId(userId);
       allow create: if isOwner(userId) && isValidUser(incoming());
-      allow update: if isOwner(userId) && isValidUser(incoming()) && (
+      allow update: if isOwner(userId) && (
         incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'voiceAvatarUrl', 'voiceBio'])
       );
+    }
+
+    match /reports/{reportId} {
+      allow read: if isSheikh();
+      allow create: if isSignedIn() && isValidReport(incoming());
+      allow update: if isSheikh() && incoming().diff(existing()).affectedKeys().hasOnly(['status']);
     }
 
     match /tales/{taleId} {
@@ -66,7 +81,7 @@ service cloud.firestore {
          incoming().category in ['market', 'stories', 'farming', 'news', 'advice', 'other'])
       );
 
-      allow delete: if isOwner(existing().authorId);
+      allow delete: if isOwner(existing().authorId) || isSheikh();
 
       match /responses/{responseId} {
         allow read: if isSignedIn();
