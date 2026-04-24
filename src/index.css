@@ -1,0 +1,52 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=Inter:wght@100..900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Cormorant Garamond", serif;
+  --font-mono: "JetBrains Mono", monospace;
+  
+  --color-sand: #F5F5F0;
+  --color-bone: #FDFDFB;
+  --color-clay: #C26E40;
+  --color-olive: #5A5A40;
+  --color-stone: #8B8B7A;
+  --color-border-warm: #DCDCD2;
+  --color-yemen-red: #CE1126;
+  --color-yemen-black: #2D2D2A;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-sand);
+  color: var(--color-yemen-black);
+  @apply antialiased;
+}
+
+.serif {
+  font-family: var(--font-serif);
+}
+
+.yemeni-card {
+  @apply bg-white rounded-[32px] border border-border-warm shadow-sm overflow-hidden;
+}
+
+.yemeni-button {
+  @apply bg-olive text-white px-6 py-3 rounded-full hover:bg-olive/90 transition-all font-medium;
+}
+
+.mic-button {
+  @apply w-24 h-24 rounded-[40px] bg-clay text-white flex items-center justify-center shadow-lg transition-all active:scale-95;
+}
+
+.mic-button.recording {
+  @apply bg-clay animate-pulse scale-110 shadow-clay/50;
+}
+
+.category-pill {
+  @apply px-4 py-2 rounded-full border border-border-warm bg-white text-stone font-bold text-sm transition-all hover:bg-bone hover:border-olive/30;
+}
+
+.category-pill.active {
+  @apply bg-olive text-white border-olive;
+}

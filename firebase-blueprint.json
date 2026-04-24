@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Information about the user, focused on voice identity.",
+      "type": "object",
+      "properties": {
+        "phoneNumber": { "type": "string" },
+        "displayName": { "type": "string" },
+        "voiceAvatarUrl": { "type": "string", "description": "URL to a short voice intro or avatar sound." },
+        "voiceBio": { "type": "string", "description": "AI-transcribed bio." },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["phoneNumber", "displayName"]
+    },
+    "Tale": {
+      "title": "Tale/Voice Message",
+      "description": "A voice recording shared on the radio network.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "audioUrl": { "type": "string" },
+        "duration": { "type": "number" },
+        "transcription": { "type": "string" },
+        "category": { "type": "string", "enum": ["market", "stories", "farming", "news", "advice", "other"] },
+        "region": { "type": "string" },
+        "clapsCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "isPublic": { "type": "boolean" }
+      },
+      "required": ["authorId", "audioUrl", "category"]
+    },
+    "Response": {
+      "title": "Voice Response",
+      "description": "A voice reply to a tale.",
+      "type": "object",
+      "properties": {
+        "taleId": { "type": "string" },
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "audioUrl": { "type": "string" },
+        "duration": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["taleId", "authorId", "audioUrl"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User profiles indexed by UID."
+    },
+    "tales/{taleId}": {
+      "schema": "Tale",
+      "description": "Voice messages shared on the public or private waves."
+    },
+    "tales/{taleId}/responses/{responseId}": {
+      "schema": "Response",
+      "description": "Voice responses to a specific tale."
+    }
+  }
+}

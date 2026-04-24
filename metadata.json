@@ -1,0 +1,12 @@
+{
+  "name": "راديو الحكايات (شبكة الصوت)",
+  "description": "أول شبكة اجتماعية يمنية تعتمد كلياً على الصوت، مصممة للجميع لتجاوز عوائق الأمية والعزلة الرقمية.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "audio_recording",
+    "social_feed",
+    "ai_transcription"
+  ]
+}
