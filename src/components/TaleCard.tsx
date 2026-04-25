@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Tale, TaleCategory, VoiceResponse } from '../types';
+import { Tale, TaleCategory, VoiceResponse, UserProfile } from '../types';
 import { AudioPlayer } from './AudioPlayer';
-import { Share2, MapPin, Tag, Flag, ChevronDown, ChevronUp } from 'lucide-react';
+import { Share2, MapPin, Tag, Flag, ChevronDown, ChevronUp, Bookmark, BookmarkCheck, UserPlus, UserMinus, Ban, PlayCircle, PauseCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { VoiceRecorder } from './VoiceRecorder';
@@ -11,6 +11,9 @@ import { VoiceRecorder } from './VoiceRecorder';
 interface TaleCardProps {
   tale: Tale;
   onClap: (id: string) => void;
+  currentUserId?: string;
+  isSaved?: boolean;
+  isFollowed?: boolean;
 }
 
 const categoryIcons: Record<TaleCategory, string> = {
@@ -22,7 +25,7 @@ const categoryIcons: Record<TaleCategory, string> = {
   [TaleCategory.OTHER]: '🌑'
 };
 
-export const TaleCard: React.FC<TaleCardProps> = ({ tale, onClap }) => {
+export const TaleCard: React.FC<TaleCardProps> = ({ tale, onClap, currentUserId, isSaved, isFollowed }) => {
   const [showReplies, setShowReplies] = useState(false);
   const [responses, setResponses] = useState<VoiceResponse[]>([]);
   const [isReplying, setIsReplying] = useState(false);
@@ -30,6 +33,41 @@ export const TaleCard: React.FC<TaleCardProps> = ({ tale, onClap }) => {
 
   const [isReporting, setIsReporting] = useState(false);
   const [isUploadingReport, setIsUploadingReport] = useState(false);
+
+  const [authorAvatarUrl, setAuthorAvatarUrl] = useState<string | null>(null);
+  const [isPlayingAvatar, setIsPlayingAvatar] = useState(false);
+  const [audio] = useState(new Audio());
+
+  useEffect(() => {
+    // Fetch author's voice avatar
+    const fetchAuthorAvatar = async () => {
+      try {
+        const userDoc = await getDoc(doc(db, 'users', tale.authorId));
+        if (userDoc.exists() && userDoc.data().voiceAvatarUrl) {
+          setAuthorAvatarUrl(userDoc.data().voiceAvatarUrl);
+        }
+      } catch (e) {
+        console.error("Could not fetch author profile:", e);
+      }
+    };
+    fetchAuthorAvatar();
+  }, [tale.authorId]);
+
+  useEffect(() => {
+    if (authorAvatarUrl) {
+      audio.src = authorAvatarUrl;
+      audio.onended = () => setIsPlayingAvatar(false);
+    }
+  }, [authorAvatarUrl, audio]);
+
+  const toggleAvatarPlay = () => {
+    if (isPlayingAvatar) {
+      audio.pause();
+    } else {
+      audio.play();
+    }
+    setIsPlayingAvatar(!isPlayingAvatar);
+  };
 
   useEffect(() => {
     if (!showReplies) return;
@@ -46,6 +84,46 @@ export const TaleCard: React.FC<TaleCardProps> = ({ tale, onClap }) => {
   const handleShare = () => {
     const text = encodeURIComponent(`اسمع هذه الحكاية من ${tale.authorName} على راديو الحكايات\n\n"${tale.transcription}"\n\nاستمع من هنا: ${window.location.origin}`);
     window.open(`https://wa.me/?text=${text}`, '_blank');
+  };
+
+  const handleSaveToggle = async () => {
+    if (!currentUserId) return;
+    try {
+      const docRef = doc(db, `users/${currentUserId}/saves`, tale.id);
+      if (isSaved) {
+        await deleteDoc(docRef);
+      } else {
+        await setDoc(docRef, { savedAt: serverTimestamp() });
+      }
+    } catch (err) {
+      console.error("Save error: ", err);
+    }
+  };
+
+  const handleFollowToggle = async () => {
+    if (!currentUserId || currentUserId === tale.authorId) return;
+    try {
+      const docRef = doc(db, `users/${currentUserId}/follows`, tale.authorId);
+      if (isFollowed) {
+        await deleteDoc(docRef);
+      } else {
+        await setDoc(docRef, { createdAt: serverTimestamp() });
+      }
+    } catch (err) {
+      console.error("Follow error: ", err);
+    }
+  };
+
+  const handleBlockUser = async () => {
+    if (!currentUserId || currentUserId === tale.authorId) return;
+    if (!window.confirm(`هل أنت متأكد من حظر المستخدم ${tale.authorName}؟ لن ترى حكاياته بعد الآن.`)) return;
+    try {
+      const docRef = doc(db, `users/${currentUserId}/blocks`, tale.authorId);
+      await setDoc(docRef, { createdAt: serverTimestamp() });
+      alert('تم الحظر بنجاح.');
+    } catch (err) {
+      console.error("Block error: ", err);
+    }
   };
 
   const handleReportComplete = async (blob: Blob) => {
@@ -119,7 +197,30 @@ export const TaleCard: React.FC<TaleCardProps> = ({ tale, onClap }) => {
             {categoryIcons[tale.category]}
           </div>
           <div>
-            <h3 className="text-xl font-black text-olive leading-tight">{tale.authorName}</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-xl font-black text-olive leading-tight">{tale.authorName}</h3>
+              {authorAvatarUrl && (
+                <button 
+                  onClick={toggleAvatarPlay}
+                  className="text-clay hover:opacity-80 transition-opacity"
+                  title="الاستماع للتعريف الصوتي"
+                >
+                  {isPlayingAvatar ? <PauseCircle size={18} fill="currentColor" className="text-white" /> : <PlayCircle size={18} />}
+                </button>
+              )}
+              {currentUserId && currentUserId !== tale.authorId && (
+                <button 
+                  onClick={handleFollowToggle}
+                  className={`text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 transition-colors ${
+                    isFollowed ? 'bg-olive text-white hover:bg-olive/80' : 'bg-sand text-olive hover:bg-stone/20'
+                  }`}
+                  title={isFollowed ? "إلغاء المتابعة" : "متابعة"}
+                >
+                  {isFollowed ? <UserMinus size={12} /> : <UserPlus size={12} />}
+                  {isFollowed ? "متابع" : "متابعة"}
+                </button>
+              )}
+            </div>
             <div className="flex items-center gap-3 text-xs text-stone font-bold uppercase tracking-wider mt-1">
               <span className="flex items-center gap-1 bg-sand px-2 py-0.5 rounded-full">
                 <Tag size={10} /> {tale.category}
@@ -133,12 +234,28 @@ export const TaleCard: React.FC<TaleCardProps> = ({ tale, onClap }) => {
           </div>
         </div>
         <div className="flex flex-col items-end gap-2">
-          <span className="bg-sand text-stone px-3 py-1 rounded-full text-[10px] font-bold">
+          <span className="bg-sand text-stone px-3 py-1 rounded-full text-[10px] font-bold mt-1">
             {tale.createdAt ? new Date(tale.createdAt.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'الآن'}
           </span>
-          <button onClick={() => setIsReporting(!isReporting)} className="text-stone hover:text-yemen-red transition-colors" title="إبلاغ">
-            <Flag size={14} />
-          </button>
+          <div className="flex items-center gap-1">
+            {currentUserId && currentUserId !== tale.authorId && (
+              <button onClick={handleBlockUser} className="text-stone/50 hover:text-stone transition-colors p-1" title="حظر المستخدم">
+                <Ban size={14} />
+              </button>
+            )}
+            <button onClick={() => setIsReporting(!isReporting)} className="text-stone hover:text-yemen-red transition-colors p-1" title="إبلاغ">
+              <Flag size={14} />
+            </button>
+            {currentUserId && (
+              <button 
+                onClick={handleSaveToggle} 
+                className={`p-1 transition-colors ${isSaved ? 'text-olive' : 'text-stone hover:text-olive'}`} 
+                title={isSaved ? "إلغاء الحفظ" : "حفظ الحكاية"}
+              >
+                {isSaved ? <BookmarkCheck size={16} fill="currentColor" /> : <Bookmark size={16} />}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

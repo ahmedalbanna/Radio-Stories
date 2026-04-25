@@ -28,7 +28,7 @@ import { VoiceRecorder } from './components/VoiceRecorder';
 import { TaleCard } from './components/TaleCard';
 import { AudioPlayer } from './components/AudioPlayer';
 import { transcribeAudio, categorizeTale, moderateContent } from './lib/gemini';
-import { Radio, LogOut, User as UserIcon, Plus, X, Search, ShieldAlert } from 'lucide-react';
+import { Radio, LogOut, User as UserIcon, Plus, X, Search, ShieldAlert, Bookmark } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
@@ -44,6 +44,12 @@ export default function App() {
   const [showAdmin, setShowAdmin] = useState(false);
   const [reports, setReports] = useState<Report[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+
+  const [showSaved, setShowSaved] = useState(false);
+  const [showFollowing, setShowFollowing] = useState(false);
+  const [savedTaleIds, setSavedTaleIds] = useState<Set<string>>(new Set());
+  const [blockedUserIds, setBlockedUserIds] = useState<Set<string>>(new Set());
+  const [followedUserIds, setFollowedUserIds] = useState<Set<string>>(new Set());
 
   const isSheikh = user?.email === 'ahmedalbannatech@gmail.com';
 
@@ -76,11 +82,26 @@ export default function App() {
           } else {
             setUserProfile({ uid: u.uid, ...userSnap.data() } as UserProfile);
           }
+
+          // Fetch saves
+          onSnapshot(collection(db, `users/${u.uid}/saves`), (snap) => {
+            setSavedTaleIds(new Set(snap.docs.map(d => d.id)));
+          });
+          onSnapshot(collection(db, `users/${u.uid}/blocks`), (snap) => {
+            setBlockedUserIds(new Set(snap.docs.map(d => d.id)));
+          });
+          onSnapshot(collection(db, `users/${u.uid}/follows`), (snap) => {
+            setFollowedUserIds(new Set(snap.docs.map(d => d.id)));
+          });
+
         } catch (error) {
           handleFirestoreError(error, OperationType.WRITE, path);
         }
       } else {
         setUserProfile(null);
+        setSavedTaleIds(new Set());
+        setBlockedUserIds(new Set());
+        setFollowedUserIds(new Set());
       }
     });
     return unsubscribe;
@@ -107,10 +128,16 @@ export default function App() {
   }, [authReady, user]);
 
   useEffect(() => {
-    let result = tales;
-    if (filter !== 'all') {
+    let result = tales.filter(t => !blockedUserIds.has(t.authorId));
+    
+    if (showSaved) {
+      result = result.filter(t => savedTaleIds.has(t.id));
+    } else if (showFollowing) {
+      result = result.filter(t => followedUserIds.has(t.authorId));
+    } else if (filter !== 'all') {
       result = result.filter(t => t.category === filter);
     }
+    
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       result = result.filter(t => 
@@ -119,7 +146,7 @@ export default function App() {
       );
     }
     setFilteredTales(result);
-  }, [tales, filter, searchQuery]);
+  }, [tales, filter, searchQuery, blockedUserIds, showSaved, showFollowing, savedTaleIds, followedUserIds]);
 
   const handleLogin = () => {
     const provider = new GoogleAuthProvider();
@@ -333,18 +360,35 @@ export default function App() {
       </div>
 
       {/* Categories Scroller */}
-      <div className="w-full overflow-x-auto whitespace-nowrap px-6 py-6 flex gap-3 no-scrollbar scroll-smooth">
+      <div className="w-full overflow-x-auto whitespace-nowrap px-6 py-6 flex gap-3 no-scrollbar scroll-smooth items-center">
+        {user && (
+          <>
+            <button 
+              onClick={() => { setShowSaved(!showSaved); setShowFollowing(false); setFilter('all'); }}
+              className={`category-pill flex items-center gap-2 ${showSaved ? 'bg-olive text-white shadow-md' : 'bg-sand text-stone hover:bg-stone/10'}`}
+            >
+              محفوظاتي <Bookmark size={14} fill={showSaved ? 'white' : 'transparent'} />
+            </button>
+            <button 
+              onClick={() => { setShowFollowing(!showFollowing); setShowSaved(false); setFilter('all'); }}
+              className={`category-pill flex items-center gap-2 ${showFollowing ? 'bg-olive text-white shadow-md' : 'bg-sand text-stone hover:bg-stone/10'}`}
+            >
+              المتابعون
+            </button>
+            <div className="w-px h-6 bg-border-warm mx-1 hidden sm:block"></div>
+          </>
+        )}
         <button 
-          onClick={() => setFilter('all')}
-          className={`category-pill ${filter === 'all' ? 'active' : ''}`}
+          onClick={() => { setFilter('all'); setShowSaved(false); setShowFollowing(false); }}
+          className={`category-pill ${filter === 'all' && !showSaved && !showFollowing ? 'active' : ''}`}
         >
           كل الموجات
         </button>
         {Object.values(TaleCategory).map(cat => (
           <button 
             key={cat}
-            onClick={() => setFilter(cat)}
-            className={`category-pill ${filter === cat ? 'active' : ''}`}
+            onClick={() => { setFilter(cat); setShowSaved(false); setShowFollowing(false); }}
+            className={`category-pill ${filter === cat && !showSaved && !showFollowing ? 'active' : ''}`}
           >
             {cat === TaleCategory.MARKET ? 'سوق الحراج' : 
              cat === TaleCategory.STORIES ? 'حكايات الطيبين' : 
@@ -363,7 +407,14 @@ export default function App() {
           </div>
         ) : (
           filteredTales.map(tale => (
-            <TaleCard key={tale.id} tale={tale} onClap={handleClap} />
+            <TaleCard 
+              key={tale.id} 
+              tale={tale} 
+              onClap={handleClap}
+              currentUserId={user.uid}
+              isSaved={savedTaleIds.has(tale.id)}
+              isFollowed={followedUserIds.has(tale.authorId)}
+            />
           ))
         )}
       </main>
@@ -483,7 +534,14 @@ export default function App() {
                     <p className="text-stone italic">لم تسجل أي حكاية بعد...</p>
                   ) : (
                     tales.filter(t => t.authorId === user.uid).map(tale => (
-                      <TaleCard key={tale.id} tale={tale} onClap={handleClap} />
+                      <TaleCard 
+                        key={tale.id} 
+                        tale={tale} 
+                        onClap={handleClap} 
+                        currentUserId={user.uid}
+                        isSaved={savedTaleIds.has(tale.id)}
+                        isFollowed={followedUserIds.has(tale.authorId)}
+                      />
                     ))
                   )}
                 </div>
