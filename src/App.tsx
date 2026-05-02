@@ -255,6 +255,58 @@ export default function App() {
     }
   };
 
+  const seedDemoData = async () => {
+    if (!user) return;
+    const path = 'tales';
+    const demoAudio = [
+      "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+    ];
+    
+    const demoTales = [
+      {
+        transcription: "اليوم كان حصاد القمح في صنعاء ممتاز جداً، الأرض جادت بخيرها.",
+        category: TaleCategory.FARMING,
+      },
+      {
+        transcription: "أسعار الذهب اليوم في الحراج ارتفعت بشكل ملحوظ مقارنة بالأمس.",
+        category: TaleCategory.MARKET,
+      },
+      {
+        transcription: "أخبار عاجلة: افتتاح طريق جديد يربط بين المحافظات.",
+        category: TaleCategory.NEWS,
+      },
+      {
+        transcription: "زمان واحنا صغار كنا نلعب في الحارة من العصر للمغرب.",
+        category: TaleCategory.STORIES,
+      },
+      {
+        transcription: "نصيحتي للشباب، الصبر مفتاح الفرج والعمل الجاد يوصلك لطموحك.",
+        category: TaleCategory.ADVICE,
+      }
+    ];
+
+    try {
+      for (const tale of demoTales) {
+        await addDoc(collection(db, path), {
+          authorId: user.uid,
+          authorName: user.displayName || 'مستخدم مجهول',
+          audioUrl: demoAudio[0],
+          duration: 0,
+          region: 'صنعاء',
+          transcription: tale.transcription,
+          category: tale.category,
+          clapsCount: 0,
+          createdAt: serverTimestamp(),
+          isPublic: true
+        });
+      }
+      alert('تم إضافة البيانات التجريبية بنجاح!');
+    } catch (error) {
+      console.error(error);
+      alert('حدث خطأ أثناء إضافة البيانات التجريبية.');
+    }
+  };
+
   const handleDismissReport = async (reportId: string) => {
     try {
       await updateDoc(doc(db, 'reports', reportId), { status: 'dismissed' });
@@ -565,9 +617,14 @@ export default function App() {
                 <ShieldAlert size={28} />
                 <h2 className="serif text-2xl font-black">محكمة الراديو (خاص بالشيوخ)</h2>
               </div>
-              <button onClick={() => setShowAdmin(false)} className="p-2 hover:bg-stone/10 rounded-full transition-colors">
-                <X size={28} className="text-olive" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={seedDemoData} className="px-3 py-1.5 bg-olive text-white rounded-xl text-xs font-bold hover:bg-olive/80">
+                  بث تجريبي
+                </button>
+                <button onClick={() => setShowAdmin(false)} className="p-2 hover:bg-stone/10 rounded-full transition-colors">
+                  <X size={28} className="text-olive" />
+                </button>
+              </div>
             </header>
             
             <div className="p-6 max-w-3xl w-full mx-auto flex flex-col gap-6">
